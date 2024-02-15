@@ -2,13 +2,7 @@ package task2;
 
 import java.time.temporal.ChronoUnit;
 import java.util.List;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.LinkedBlockingDeque;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 
 
 /**
@@ -31,19 +25,10 @@ import java.util.concurrent.TimeUnit;
  */
 public abstract class HandlerImpl implements Handler {
 
-    private static final int N_PRODUCERS = 1;
-    private static final int N_CONSUMERS = 1;
-    private static final int N_SENDERS = 5;
-
     private final Client client;
 
-    //размер буфера для примера
-    private final BlockingQueue<Event> buffer = new LinkedBlockingDeque<>(1000);
     // можно настраивать кол-во потоков для максимального throughput
-    private final ExecutorService producers = Executors.newFixedThreadPool(N_PRODUCERS);
-    private final ExecutorService consumers = Executors.newFixedThreadPool(N_CONSUMERS);
-    private final ExecutorService senders = Executors.newFixedThreadPool(N_SENDERS);
-    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
+    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(10);
 
     public HandlerImpl(Client client) {
         this.client = client;
@@ -51,66 +36,20 @@ public abstract class HandlerImpl implements Handler {
 
     @Override
     public void performOperation() {
-        for (int i = 0; i < N_PRODUCERS; i++) {
-            producers.submit(this::produce);
-        }
+        Event event = client.readData();
+        List<Address> recipients = event.recipients();
 
-        for (int i = 0; i < N_CONSUMERS; i++) {
-            consumers.submit(this::consume);
-        }
-    }
-
-    // загружаем events в буфер
-    private void produce() {
-        Event event;
-        while ((event = client.readData()) != null) {
-            try {
-                buffer.put(event);
-            } catch (InterruptedException e) {
-                break;
-            }
+        for (Address address : recipients) {
+            scheduler.schedule(() -> sendWithRetry(address, event.payload()), 0, TimeUnit.MILLISECONDS);
         }
     }
 
-    private void consume() {
-        // осталось избежать вечного цикла
-        while (true) {
-            try {
-                // загружаем из буфера
-                Event event = buffer.take();
-                List<Future<ResponseWrapper>> futures = event.recipients().stream()
-                        .map(address -> senders.submit(
-                                () -> new ResponseWrapper(client.sendData(address, event.payload()), address)))
-                        .toList();
-
-                // фильтруем неотправленные
-                List<Address> retryAddresses = futures.stream()
-                        .map(f -> {
-                            try {
-                                return f.get(10, TimeUnit.SECONDS);
-                            } catch (Exception e) {
-                                throw new RuntimeException(e);
-                            }
-                        }).filter(r -> r.result() == Result.REJECTED)
-                        .map(ResponseWrapper::address)
-                        .toList();
-
-                // запускаем ретрай
-                Event retry = new Event(retryAddresses, event.payload());
-                scheduler.schedule(() -> {
-                    try {
-                        buffer.put(retry);
-                    } catch (InterruptedException e) {
-                        throw new RuntimeException(e);
-                    }
-                }, timeout().get(ChronoUnit.MILLIS), TimeUnit.of(ChronoUnit.MILLIS));
-
-            } catch (InterruptedException e) {
-                break;
-            }
+    private void sendWithRetry(Address recipient, Payload payload) {
+        Result result = client.sendData(recipient, payload);
+        if (result == Result.REJECTED) {
+            scheduler.schedule(() -> sendWithRetry(recipient, payload),
+                    timeout().get(ChronoUnit.MILLIS), TimeUnit.MILLISECONDS);
         }
     }
 }
 
-record ResponseWrapper(Result result, Address address) {
-}
