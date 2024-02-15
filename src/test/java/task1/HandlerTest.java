@@ -1,16 +1,19 @@
 package task1;
 
+import org.junit.jupiter.api.Test;
+
 import java.util.concurrent.ThreadLocalRandom;
 
-/**
- * Быстрая проверка задачи, на полноценные тесты Junit не хватило времени
- */
-public class Test {
-    public static void main(String[] args) {
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+public class HandlerTest {
+
+    @Test
+    public void test() {
         Client client = new ClientImpl();
         Handler h = new HandlerImpl(client);
         ApplicationStatusResponse abc = h.performOperation("abc");
-        System.out.println(abc);
+        assertEquals("Success{id='abc', status='abc'}", abc.toString());
 
     }
 
@@ -19,7 +22,7 @@ public class Test {
         @Override
         public Response getApplicationStatus1(String id) {
             try {
-                Thread.sleep(ThreadLocalRandom.current().nextInt(300));
+                Thread.sleep(ThreadLocalRandom.current().nextInt(100));
             } catch (InterruptedException e) {
                 throw new RuntimeException(e);
             }
@@ -29,7 +32,7 @@ public class Test {
         @Override
         public Response getApplicationStatus2(String id) {
             try {
-                Thread.sleep(ThreadLocalRandom.current().nextInt(200));
+                Thread.sleep(ThreadLocalRandom.current().nextInt(2000));
             } catch (InterruptedException e) {
                 throw new RuntimeException(e);
             }
